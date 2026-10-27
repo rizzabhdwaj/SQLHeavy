@@ -62,7 +62,37 @@ int main(void) {
   assert(db->catalogue->table_count == MAX_TABLES);
 
   close_db(db);
+
+  // Reopen before cleanup so this verifies data persisted to disk.
+  db = open_db("stress_db");
+  assert(db != NULL);
+  assert(db->catalogue->table_count == MAX_TABLES);
+
+  for (uint16_t table = 0; table < MAX_TABLES; table++) {
+    char table_name[64];
+    snprintf(table_name, sizeof(table_name), "table_%u", (unsigned)table);
+    assert(find_table(db, table_name) != NULL);
+
+    ScanBatch batch = {0};
+    assert(scan_table("stress_db", table_name, &batch) == 0);
+    assert(batch.count == MAX_RECORDS);
+
+    for (uint32_t record = 0; record < batch.count; record++) {
+      TestRecord expected = {.id = (int32_t)record};
+      snprintf(expected.payload, sizeof(expected.payload), "table=%u record=%u",
+               (unsigned)table, (unsigned)record);
+      assert(batch.records[record].len == sizeof(expected));
+      assert(memcmp(batch.records[record].data, &expected, sizeof(expected)) ==
+             0);
+    }
+
+    scan_batch_free(&batch);
+  }
+
+  close_db(db);
+
+  // Only delete the test database after every table has been read and checked.
   remove_test_database(root);
-  puts("test_insert_stress: ok");
+  puts("test_insert_stress: insert, reopen, read, and cleanup ok");
   return 0;
 }
