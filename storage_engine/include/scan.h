@@ -5,9 +5,16 @@
 
 #include <stdint.h>
 
+// physical location of one record, unique within its table
+typedef struct {
+  uint32_t page_id;
+  uint16_t slot_id;
+} RecordId;
+
 typedef struct {
   const uint8_t *data;
   uint32_t len;
+  RecordId id; // page_id + slot_id, unique to this record
 } RawRecord;
 
 typedef struct {

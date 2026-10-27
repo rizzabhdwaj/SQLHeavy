@@ -26,7 +26,7 @@ user_data users[] = {
     {"Raj", 36, 4000},
 };
 int main(void) {
-  Database *db = new_db("TEST_DB2");
+  Database *db = open_db("TEST_DB2");
 
   if (db == NULL) {
     printf("Failed to open database TEST_DB2\n");

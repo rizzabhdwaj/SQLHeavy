@@ -103,6 +103,8 @@ int scan_table(const char *db_name, const char *table_name, ScanBatch *out) {
       memcpy(cursor, (const uint8_t *)&page + s.offset, s.length);
       records[n].data = cursor;
       records[n].len = s.length;
+      records[n].id.page_id = id;
+      records[n].id.slot_id = i;
       cursor += s.length;
       n++;
     }

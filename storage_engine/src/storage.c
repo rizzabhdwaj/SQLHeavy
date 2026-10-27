@@ -10,7 +10,7 @@
 #include <string.h>
 
 // opens (creating if needed) data/<name>/ and loads its catalogue into memory
-Database *new_db(const char *name) {
+Database *open_db(const char *name) {
   Database *db = calloc(1, sizeof(Database));
   if (db == NULL) {
     return NULL;

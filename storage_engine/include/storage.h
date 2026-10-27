@@ -12,8 +12,8 @@ typedef struct {
   Catalogue *catalogue; // every table of this database, loaded from catalog.dat
 } Database;
 
-// creates data/<name>/ + catalog.dat, then loads the catalogue
-Database *new_db(const char *name);
+// opens data/<name>/ (creating it if absent) and loads the catalogue
+Database *open_db(const char *name);
 void close_db(Database *db);
 
 // writes the table record into catalog.dat, returns the stored record

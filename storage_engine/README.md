@@ -93,7 +93,7 @@ A page is a fixed-size **slotted page**: `PAGE_SIZE = 2400` data bytes +
 Open a database:
 
 ```
-new_db("TEST_DB")
+open_db("TEST_DB")
   -> catalogue_create()     # make data/TEST_DB/catalog.dat (header only)
   -> catalogue_load()       # read all TableMetadata into an in-memory Catalogue
 ```
@@ -122,7 +122,8 @@ scan_table(db, "USERS", &batch)
   -> set_target() + target_exists()
   -> pass 1: count records + bytes
   -> pass 2: copy every slot's bytes into one malloc'd buffer
-  -> ScanBatch { records, count }     # free with scan_batch_free()
+  -> ScanBatch { records, count, meta }   # free with scan_batch_free()
+       each RawRecord carries RecordId { page_id, slot_id }, unique per record
 ```
 
 Layering:
