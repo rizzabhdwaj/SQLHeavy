@@ -91,6 +91,5 @@ int db_insert_record(Database *db, const char *table_name, const void *data,
   }
 
   set_target(db->name, table_name);
-  insert_record(data, length);
-  return 0;
+  return insert_record(data, length);
 }

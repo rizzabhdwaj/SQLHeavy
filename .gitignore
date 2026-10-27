@@ -2,6 +2,7 @@
 query_processing/target/
 query_processing/Cargo.lock
 /storage_engine/libdatabase.so
+/storage_engine/test_insert_stress
 /storage_engine/.cache/
 /lib/
 

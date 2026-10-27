@@ -54,7 +54,8 @@ static inline Slot get_slot(const Page *page, uint16_t i) {
 PageId allocate_page(void);
 Page read_page(PageId page_id);
 PageId fetch_latest(void);
-void insert_record(const void *data, uint16_t length);
+// appends one record to the current target; returns 0 on success
+int insert_record(const void *data, uint16_t length);
 
 // 1 when data/<db>/<table>.dat exists for the current target
 int target_exists(void);

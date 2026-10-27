@@ -79,8 +79,7 @@ int catalogue_put(const char *db_name, const TableMetadata *meta) {
   }
 
   set_catalogue_target(db_name);
-  insert_record(meta, (uint16_t)sizeof(TableMetadata));
-  return 0;
+  return insert_record(meta, (uint16_t)sizeof(TableMetadata));
 }
 
 // reads every TableMetadata record of catalog.dat into a fresh Catalogue

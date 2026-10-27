@@ -203,7 +203,16 @@ PageId fetch_latest(void) {
 
 // appends one record to the latest page of the current target, allocating a
 // new page when there is not enough room for the record plus its slot entry
-void insert_record(const void *data, uint16_t length) {
+int insert_record(const void *data, uint16_t length) {
+  if (data == NULL && length != 0) {
+    return -1;
+  }
+
+  // A slot entry must fit alongside every record, even on an empty page.
+  if ((size_t)length + sizeof(PageHeader) + sizeof(Slot) > PAGE_SIZE) {
+    return -1;
+  }
+
   PageId page_id = fetch_latest();
   Page page = {};
 
@@ -219,14 +228,14 @@ void insert_record(const void *data, uint16_t length) {
     page_id = allocate_page();
     if (page_id == (PageId)-1) {
       fprintf(stderr, "failed to allocate page\n");
-      return;
+      return -1;
     }
     page = read_page(page_id);
   }
 
   if (page.header.page_id != page_id) {
     fprintf(stderr, "failed to read page %u\n", (unsigned)page_id);
-    return;
+    return -1;
   }
 
   // records grow up from the header, slots grow down from the page tail
@@ -245,14 +254,17 @@ void insert_record(const void *data, uint16_t length) {
   FILE *file = fopen(g_path, "r+b");
   if (file == NULL) {
     perror("open page file");
-    return;
+    return -1;
   }
 
   if (fseek(file, (long)page_id * (long)PAGE_SIZE + (long)sizeof(FileHeader),
             SEEK_SET) != 0 ||
       fwrite(&page, sizeof(Page), 1, file) != 1) {
     perror("write page");
+    fclose(file);
+    return -1;
   }
 
   fclose(file);
+  return 0;
 }

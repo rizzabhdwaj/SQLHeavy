@@ -6,8 +6,7 @@ SRC = $(wildcard src/*.c)
 HDR = $(wildcard include/*.h)
 LIB = libdatabase.so
 
-TEST_SRC = tests/test_storage.c
-TEST_BIN = test_storage
+TEST_BINS = test_storage test_insert_stress
 
 .PHONY: all lib test clean
 
@@ -18,14 +17,18 @@ lib: $(LIB)
 $(LIB): $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -shared -o $@ $(SRC)
 
-$(TEST_BIN): $(TEST_SRC) $(HDR) $(LIB)
+test_storage: tests/test_storage.c $(HDR) $(LIB)
 	$(CC) -Wall -Wextra -g -Iinclude \
-		-o $@ $(TEST_SRC) -L. -ldatabase \
+		-o $@ $< -L. -ldatabase \
 		-Wl,-rpath,'$$ORIGIN'
 
-test: $(TEST_BIN)
-	./$(TEST_BIN)
+test_insert_stress: tests/test_insert_stress.c $(HDR) $(LIB)
+	$(CC) -Wall -Wextra -g -Iinclude \
+		-o $@ $< -L. -ldatabase \
+		-Wl,-rpath,'$$ORIGIN'
+
+test: $(TEST_BINS)
+	@for test in $(TEST_BINS); do ./$$test || exit $$?; done
 
 clean:
-	rm -f $(LIB) $(TEST_BIN) a.out *.o src/*.o
-
+	rm -f $(LIB) $(TEST_BINS) a.out *.o src/*.o
