@@ -2,12 +2,13 @@
 #include "scan.h"
 #include "storage.h"
 
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "test_utils.h"
 
 #define MAX_RECORDS 1000
 
@@ -22,22 +23,22 @@ static void remove_test_database(const char *root) {
   for (uint16_t table = 0; table < MAX_TABLES; table++) {
     snprintf(path, sizeof(path), "%s/stress_db/tables/table_%u.dat", root,
              (unsigned)table);
-    assert(remove(path) == 0);
+    TEST_ASSERT(remove(path) == 0);
   }
 
   snprintf(path, sizeof(path), "%s/stress_db/tables", root);
-  assert(rmdir(path) == 0);
+  TEST_ASSERT(rmdir(path) == 0);
   snprintf(path, sizeof(path), "%s/stress_db/catalog.dat", root);
-  assert(remove(path) == 0);
+  TEST_ASSERT(remove(path) == 0);
   snprintf(path, sizeof(path), "%s/stress_db", root);
-  assert(rmdir(path) == 0);
-  assert(rmdir(root) == 0);
+  TEST_ASSERT(rmdir(path) == 0);
+  TEST_ASSERT(rmdir(root) == 0);
 }
 
 int main(void) {
   char root[] = "/tmp/mydb-test-insert-XXXXXX";
-  assert(mkdtemp(root) != NULL);
-  assert(setenv("MYDB_DATA_DIR", root, 1) == 0);
+  TEST_ASSERT(mkdtemp(root) != NULL);
+  TEST_ASSERT(setenv("MYDB_DATA_DIR", root, 1) == 0);
 
   ColumnMetadata columns[] = {
       {"id", TYPE_INT32, 0, sizeof(int32_t)},
@@ -45,45 +46,45 @@ int main(void) {
   };
 
   Database *db = open_db("stress_db");
-  assert(db != NULL);
+  TEST_ASSERT(db != NULL);
 
   for (uint16_t table = 0; table < MAX_TABLES; table++) {
     char table_name[64];
     snprintf(table_name, sizeof(table_name), "table_%u", (unsigned)table);
-    assert(new_table(db, table_name, columns, 2) != NULL);
+    TEST_ASSERT(new_table(db, table_name, columns, 2) != NULL);
 
     for (int32_t record = 0; record < MAX_RECORDS; record++) {
       TestRecord value = {.id = record};
       snprintf(value.payload, sizeof(value.payload), "table=%u record=%d",
                (unsigned)table, record);
-      assert(db_insert_record(db, table_name, &value, sizeof(value)) == 0);
+      TEST_ASSERT(db_insert_record(db, table_name, &value, sizeof(value)) == 0);
     }
   }
-  assert(db->catalogue->table_count == MAX_TABLES);
+  TEST_ASSERT(db->catalogue->table_count == MAX_TABLES);
 
   close_db(db);
 
   // Reopen before cleanup so this verifies data persisted to disk.
   db = open_db("stress_db");
-  assert(db != NULL);
-  assert(db->catalogue->table_count == MAX_TABLES);
+  TEST_ASSERT(db != NULL);
+  TEST_ASSERT(db->catalogue->table_count == MAX_TABLES);
 
   for (uint16_t table = 0; table < MAX_TABLES; table++) {
     char table_name[64];
     snprintf(table_name, sizeof(table_name), "table_%u", (unsigned)table);
-    assert(find_table(db, table_name) != NULL);
+    TEST_ASSERT(find_table(db, table_name) != NULL);
 
     ScanBatch batch = {0};
-    assert(scan_table("stress_db", table_name, &batch) == 0);
-    assert(batch.count == MAX_RECORDS);
+    TEST_ASSERT(scan_table("stress_db", table_name, &batch) == 0);
+    TEST_ASSERT(batch.count == MAX_RECORDS);
 
     for (uint32_t record = 0; record < batch.count; record++) {
       TestRecord expected = {.id = (int32_t)record};
       snprintf(expected.payload, sizeof(expected.payload), "table=%u record=%u",
                (unsigned)table, (unsigned)record);
-      assert(batch.records[record].len == sizeof(expected));
-      assert(memcmp(batch.records[record].data, &expected, sizeof(expected)) ==
-             0);
+      TEST_ASSERT(batch.records[record].len == sizeof(expected));
+      TEST_ASSERT(memcmp(batch.records[record].data, &expected, sizeof(expected)) ==
+                  0);
     }
 
     scan_batch_free(&batch);
@@ -93,6 +94,6 @@ int main(void) {
 
   // Only delete the test database after every table has been read and checked.
   remove_test_database(root);
-  puts("test_insert_stress: insert, reopen, read, and cleanup ok");
+  TEST_OK("test_insert_stress: insert, reopen, read, and cleanup");
   return 0;
 }
