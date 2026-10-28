@@ -10,7 +10,7 @@
 
 #include "test_utils.h"
 
-#define MAX_RECORDS 1000
+#define MAX_RECORDS 5000
 
 typedef struct {
   int32_t id;
@@ -83,8 +83,8 @@ int main(void) {
       snprintf(expected.payload, sizeof(expected.payload), "table=%u record=%u",
                (unsigned)table, (unsigned)record);
       TEST_ASSERT(batch.records[record].len == sizeof(expected));
-      TEST_ASSERT(memcmp(batch.records[record].data, &expected, sizeof(expected)) ==
-                  0);
+      TEST_ASSERT(
+          memcmp(batch.records[record].data, &expected, sizeof(expected)) == 0);
     }
 
     scan_batch_free(&batch);

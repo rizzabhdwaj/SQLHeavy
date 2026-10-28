@@ -80,6 +80,12 @@ unsafe extern "C" {
         table_name: *const c_char,
         out: *mut ScanBatch,
     ) -> c_int;
+    pub(crate) fn scan_table_page(
+        db_name: *const c_char,
+        table_name: *const c_char,
+        page_id: u32,
+        out: *mut ScanBatch,
+    ) -> c_int;
     pub(crate) fn scan_batch_free(batch: *mut ScanBatch);
 
     pub(crate) fn catalogue_load(db_name: *const c_char) -> *mut Catalogue;

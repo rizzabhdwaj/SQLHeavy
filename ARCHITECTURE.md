@@ -13,8 +13,8 @@ C storage engine
     database catalog, table files, pages, records, scans
 ```
 
-The C engine does not parse or execute SQL. The Rust layer currently loads C
-records into memory and gives them to DataFusion.
+The C engine does not parse or execute SQL. The Rust layer exposes page-sized C
+scan results as lazy Arrow batches to DataFusion.
 
 ## 1. Repository Map
 
@@ -473,13 +473,13 @@ Rust fetch_data()
     |
     +--> list_tables()
     |
-    +--> scan every catalogued C table
+    +--> register a lazy provider for every catalogued C table
     |
-    +--> Decode all rows into Rust Values
+    +--> DataFusion requests page-sized batches from each provider
     |
-    +--> Build Arrow arrays and an Arrow RecordBatch
+    +--> C reads one page through scan_table_page()
     |
-    +--> Register each table as a DataFusion MemTable
+    +--> Decode that page into Rust Values and Arrow arrays
     |
     +--> DataFusion parses and executes SQL
     |
@@ -493,18 +493,19 @@ Visual form:
 
 ```text
 Disk
-  -> C full scan
-  -> RawRecord bytes
+  -> C page scan
+  -> bounded RawRecord bytes
   -> Rust Values
   -> Arrow RecordBatch
-  -> DataFusion MemTable
-  -> SQL execution
+  -> DataFusion execution
+  -> next page
   -> QueryResult
 ```
 
-This means queries currently load complete tables into memory before SQL
-execution. Indexes, predicate pushdown, streaming scans, and buffer-pool reads
-do not exist yet.
+The source side now keeps only one page-sized scan batch in memory at a time.
+The public `fetch_data()` API still calls DataFusion `collect()` and returns a
+fully materialized `QueryResult`, so the final query result can still be large.
+Indexes, predicate pushdown, and buffer-pool reads do not exist yet.
 
 ## 10. Important Terminology
 
@@ -524,12 +525,12 @@ do not exist yet.
 | Record ID / RID | `{ page_id, slot_id }`, the physical location of a record |
 | Scan | Sequentially reading every page and slot in a table |
 | RawRecord | C representation of copied record bytes plus its RID |
-| ScanBatch | Complete in-memory result of one table scan |
+| ScanBatch | In-memory result for one full scan or one page batch |
 | FFI | Foreign Function Interface between Rust and C |
 | `#[repr(C)]` | Rust representation that follows C memory layout |
 | Arrow array | Typed columnar in-memory data used by DataFusion |
 | RecordBatch | Arrow's columnar group of rows; separate from C `ScanBatch` |
-| MemTable | DataFusion table backed by in-memory Arrow batches |
+| Lazy table provider | DataFusion table that requests page-sized batches on demand |
 | DataFusion | Rust SQL parser, planner, optimizer, and executor |
 
 ## 11. Current Test Flow
@@ -599,12 +600,13 @@ data/
 SQL query
   -> Rust fetch_data
   -> list catalog tables
-  -> C scan_table
-  -> ScanBatch
+  -> lazy TableProvider
+  -> C scan_table_page (one page)
+  -> ScanBatch for one page
   -> decode Values
   -> Arrow RecordBatch
-  -> DataFusion MemTable
-  -> SQL execution
+  -> DataFusion SQL execution
+  -> next page batch
   -> QueryResult
 ```
 

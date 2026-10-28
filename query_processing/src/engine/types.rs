@@ -85,6 +85,7 @@ impl std::fmt::Display for Value {
 }
 
 /// A column as stored in the catalogue.
+#[derive(Clone, Debug)]
 pub struct ColumnInfo {
     pub name: String,
     pub type_: i32,
@@ -100,6 +101,7 @@ impl ColumnInfo {
 }
 
 /// A table's schema.
+#[derive(Clone, Debug)]
 pub struct TableInfo {
     pub name: String,
     pub columns: Vec<ColumnInfo>,
@@ -209,7 +211,11 @@ pub(crate) fn read_value(record: &[u8], col: &ColumnInfo) -> Result<Value, Strin
     }
 }
 
-pub(crate) fn write_value(record: &mut [u8], col: &ColumnInfo, value: &Value) -> Result<(), String> {
+pub(crate) fn write_value(
+    record: &mut [u8],
+    col: &ColumnInfo,
+    value: &Value,
+) -> Result<(), String> {
     let start = col.offset as usize;
     let dst = record
         .get_mut(start..start + col.length as usize)

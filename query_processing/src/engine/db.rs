@@ -97,7 +97,6 @@ impl Database {
         let c_table = CString::new(table).map_err(|_| "table name contains NUL".to_string())?;
         let c_db = CString::new(self.name.as_str())
             .map_err(|_| "database name contains NUL".to_string())?;
-
         let mut batch: ScanBatch = unsafe { std::mem::zeroed() };
         let rc = unsafe { scan_table(c_db.as_ptr(), c_table.as_ptr(), &mut batch) };
         if rc != 0 {
@@ -107,41 +106,8 @@ impl Database {
             ));
         }
 
-        let info = table_info(&batch.meta);
-        let decoded: Result<Vec<Record>, String> =
-            if batch.records.is_null() || batch.count == 0 {
-                Ok(Vec::new())
-            } else {
-                let records =
-                    unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
-                records
-                    .iter()
-                    .map(|rec| {
-                        let bytes =
-                            unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
-                        let values = info
-                            .columns
-                            .iter()
-                            .map(|col| read_value(bytes, col))
-                            .collect::<Result<Vec<Value>, String>>()?;
-                        Ok(Record {
-                            id: RecordId {
-                                page_id: rec.id.page_id,
-                                slot_id: rec.id.slot_id,
-                            },
-                            values,
-                        })
-                    })
-                    .collect()
-            };
-
-        unsafe { scan_batch_free(&mut batch) };
-        Ok(ScanResult {
-            table: info,
-            records: decoded?,
-        })
+        decode_scan_batch(batch)
     }
-
     pub(crate) fn list_tables(&self) -> Result<Vec<TableInfo>, String> {
         let c_db = CString::new(self.name.as_str())
             .map_err(|_| "database name contains NUL".to_string())?;
@@ -173,6 +139,57 @@ impl Database {
 
         unsafe { catalogue_free(cat_ptr) };
         Ok(tables)
+    }
+}
+
+fn decode_scan_batch(mut batch: ScanBatch) -> Result<ScanResult, String> {
+    let info = table_info(&batch.meta);
+    let decoded: Result<Vec<Record>, String> = if batch.records.is_null() || batch.count == 0 {
+        Ok(Vec::new())
+    } else {
+        let records = unsafe { std::slice::from_raw_parts(batch.records, batch.count as usize) };
+        records
+            .iter()
+            .map(|rec| {
+                let bytes = unsafe { std::slice::from_raw_parts(rec.data, rec.len as usize) };
+                let values = info
+                    .columns
+                    .iter()
+                    .map(|col| read_value(bytes, col))
+                    .collect::<Result<Vec<Value>, String>>()?;
+                Ok(Record {
+                    id: RecordId {
+                        page_id: rec.id.page_id,
+                        slot_id: rec.id.slot_id,
+                    },
+                    values,
+                })
+            })
+            .collect()
+    };
+
+    unsafe { scan_batch_free(&mut batch) };
+    Ok(ScanResult {
+        table: info,
+        records: decoded?,
+    })
+}
+
+pub(crate) fn scan_page_for(
+    db_name: &str,
+    table: &str,
+    page_id: u32,
+) -> Result<Option<ScanResult>, String> {
+    let c_table = CString::new(table).map_err(|_| "table name contains NUL".to_string())?;
+    let c_db = CString::new(db_name).map_err(|_| "database name contains NUL".to_string())?;
+    let mut batch: ScanBatch = unsafe { std::mem::zeroed() };
+    let rc = unsafe { scan_table_page(c_db.as_ptr(), c_table.as_ptr(), page_id, &mut batch) };
+    match rc {
+        0 => decode_scan_batch(batch).map(Some),
+        1 => Ok(None),
+        rc => Err(format!(
+            "scan_table_page({db_name}.{table}, {page_id}) failed: rc={rc}"
+        )),
     }
 }
 

@@ -2,6 +2,7 @@
 #define SCAN_H
 
 #include "catalog.h"
+#include "page_manager.h"
 
 #include <stdint.h>
 
@@ -27,6 +28,10 @@ typedef struct {
 // returns 0 on success, -1 on unknown db/table or corrupt page
 // an existing but empty table gives count == 0, records == NULL
 int scan_table(const char *db_name, const char *table_name, ScanBatch *out);
+
+// reads one page of records; returns 0 for a batch, 1 at end of file, -1 on error
+int scan_table_page(const char *db_name, const char *table_name, PageId page_id,
+                    ScanBatch *out);
 
 // releases everything owned by the batch and zeroes it
 void scan_batch_free(ScanBatch *batch);

@@ -115,6 +115,75 @@ int scan_table(const char *db_name, const char *table_name, ScanBatch *out) {
   return 0;
 }
 
+int scan_table_page(const char *db_name, const char *table_name, PageId page_id,
+                    ScanBatch *out) {
+  if (out == NULL) {
+    return -1;
+  }
+  out->records = NULL;
+  out->count = 0;
+  memset(&out->meta, 0, sizeof out->meta);
+
+  if (db_name == NULL || table_name == NULL ||
+      catalogue_get(db_name, table_name, &out->meta) != 0) {
+    return -1;
+  }
+
+  set_target(db_name, table_name);
+  if (!target_exists()) {
+    return -1;
+  }
+
+  PageId latest = fetch_latest();
+  if (latest == (PageId)-1 || page_id > latest) {
+    return 1;
+  }
+
+  Page page = read_page(page_id);
+  if (page.header.page_id != page_id) {
+    return -1;
+  }
+
+  size_t total = 0;
+  for (uint16_t i = 0; i < page.header.num_slots; i++) {
+    Slot slot;
+    if (!slot_of(&page, i, &slot)) {
+      return -1;
+    }
+    total += slot.length;
+  }
+
+  if (page.header.num_slots == 0) {
+    return 0;
+  }
+
+  uint8_t *block = malloc(sizeof(RawRecord) * page.header.num_slots + total);
+  if (block == NULL) {
+    return -1;
+  }
+
+  RawRecord *records = (RawRecord *)block;
+  uint8_t *cursor = block + sizeof(RawRecord) * page.header.num_slots;
+  for (uint16_t i = 0; i < page.header.num_slots; i++) {
+    Slot slot;
+    if (!slot_of(&page, i, &slot)) {
+      free(block);
+      return -1;
+    }
+
+    memcpy(cursor, (const uint8_t *)&page + slot.offset, slot.length);
+    records[i].data = cursor;
+    records[i].len = slot.length;
+    records[i].id.page_id = page_id;
+    records[i].id.slot_id = i;
+    cursor += slot.length;
+  }
+
+  out->records = records;
+  out->count = page.header.num_slots;
+  return 0;
+}
+
 // releases the buffer owned by the batch
 void scan_batch_free(ScanBatch *batch) {
   if (batch == NULL) {

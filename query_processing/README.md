@@ -1,9 +1,9 @@
 # query_processing
 
 The Rust front-end. It adds SQL on top of the C engine: it reads/writes rows
-through FFI, hands them to **Apache DataFusion** as an in-memory Arrow table, and
-runs SQL. The C engine stays SQL-free — DataFusion only ever sees a copy of the
-rows in RAM.
+through FFI, exposes page-sized Arrow batches to **Apache DataFusion**, and runs
+SQL. The C engine stays SQL-free. DataFusion receives bounded batches instead
+of a preloaded copy of the entire table.
 
 ## File map
 
@@ -14,7 +14,7 @@ rows in RAM.
 | `src/engine/db.rs` | Safe wrapper over the C database handle (`Database`: open / create_table / insert / scan / list_tables), plus the `Drop` that closes it. |
 | `src/engine/ffi.rs` | The **only** module that touches `libdatabase.so`: raw `#[repr(C)]` types and `extern "C"` declarations. |
 | `src/engine/types.rs` | SQL-free domain types (`Value`, `ColType`, `ColumnSpec`, `QueryResult`, …) and the byte/layout helpers that encode/decode records from column metadata. |
-| `src/engine/query.rs` | The DataFusion boundary: `fetch_data(query)` builds an in-memory table from scans, runs SQL, and decodes results; `print_records`. |
+| `src/engine/query.rs` | The DataFusion boundary: `fetch_data(query)` registers lazy table providers, reads page batches, runs SQL, and decodes results; `print_records`. |
 | `build.rs` | Tells Cargo where to find and link the C `.so`. It does **not** build it. |
 
 ## Linking (build.rs)
@@ -40,8 +40,9 @@ create_table(&db, "USERS", cols)      -> Database::create_table -> new_table    
 insert_data(&db, "USERS", &[Value])   -> Database::insert   -> db_insert_record  (C)
     -> look up the table schema, pack values into a record by column offset/length
 fetch_data(&db, "SELECT ...").await   -> query::fetch_data
-    -> list_tables (catalogue_load) + scan each table (scan_table)
-    -> build an Arrow RecordBatch, register it as a DataFusion MemTable
+    -> list_tables (catalogue_load) + register a lazy provider per table
+    -> DataFusion requests one page-sized Arrow batch at a time
+    -> C scan_table_page() reads only the requested page
     -> ctx.sql(query).collect()
     -> decode results back into QueryResult { columns, rows }
 print_records(&result)

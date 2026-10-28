@@ -1,23 +1,35 @@
-// engine/query.rs — the DataFusion boundary. It turns scanned records into an
-// in-memory Arrow table, runs the SQL `query`, and decodes the result back into
-// engine `Value`s so callers never see Arrow types.
+// engine/query.rs — the DataFusion boundary. It exposes C table pages as lazy
+// Arrow batches, runs the SQL `query`, and decodes the result back into engine
+// `Value`s so callers never see Arrow types.
 
+use std::any::Any;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::fmt;
+use std::sync::{Arc, Mutex, OnceLock};
 
+use async_trait::async_trait;
 use datafusion::arrow::array::{
     ArrayRef, Float64Array, Int32Array, Int64Array, StringArray, UInt16Array,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::common::ScalarValue;
-use datafusion::datasource::MemTable;
+use datafusion::catalog::{Session, TableProvider};
+use datafusion::common::{DataFusionError, Result as DataFusionResult, ScalarValue};
+use datafusion::logical_expr::{Expr, TableProviderFilterPushDown, TableType};
+use datafusion::physical_plan::memory::{LazyBatchGenerator, LazyMemoryExec};
 use datafusion::prelude::*;
+use parking_lot::RwLock;
 
-use super::db::Database;
+use super::db::{Database, scan_page_for};
 use super::types::{ColType, QueryResult, Record, TableInfo, Value};
 
-/// Runs `query` via DataFusion over every catalogued table and returns its data.
+static C_SCAN_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn c_scan_lock() -> &'static Mutex<()> {
+    C_SCAN_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Runs `query` via DataFusion over lazily scanned table batches.
 pub(crate) async fn fetch_data(db: &Database, query: &str) -> Result<QueryResult, String> {
     let ctx = SessionContext::new();
 
@@ -32,17 +44,148 @@ pub(crate) async fn fetch_data(db: &Database, query: &str) -> Result<QueryResult
             );
             continue;
         }
-        let scan = db.scan(&table.name)?;
-        let schema = arrow_schema(&scan.table);
-        let batch = arrow_batch(schema.clone(), &scan.table, &scan.records)?;
-        let mem = MemTable::try_new(schema.into(), vec![vec![batch]]).map_err(|e| e.to_string())?;
-        ctx.register_table(table.name.as_str(), Arc::new(mem))
+        let provider = CTableProvider::new(db.name(), table);
+        let table_name = provider.table_name().to_string();
+        ctx.register_table(&table_name, Arc::new(provider))
             .map_err(|e| e.to_string())?;
     }
 
     let df = ctx.sql(query).await.map_err(|e| e.to_string())?;
     let batches = df.collect().await.map_err(|e| e.to_string())?;
     decode_batches(&batches)
+}
+
+#[derive(Debug)]
+struct CTableProvider {
+    db_name: String,
+    table: TableInfo,
+    schema: Arc<Schema>,
+}
+
+impl CTableProvider {
+    fn new(db_name: &str, table: TableInfo) -> Self {
+        let schema = Arc::new(arrow_schema(&table));
+        Self {
+            db_name: db_name.to_string(),
+            table,
+            schema,
+        }
+    }
+
+    fn table_name(&self) -> &str {
+        &self.table.name
+    }
+}
+
+#[async_trait]
+impl TableProvider for CTableProvider {
+    fn schema(&self) -> Arc<Schema> {
+        Arc::clone(&self.schema)
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
+    async fn scan(
+        &self,
+        _state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        _filters: &[Expr],
+        limit: Option<usize>,
+    ) -> DataFusionResult<Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
+        let generator = CScanGenerator {
+            db_name: self.db_name.clone(),
+            table_name: self.table.name.clone(),
+            table: self.table.clone(),
+            schema: Arc::clone(&self.schema),
+            page_id: 0,
+            remaining: limit,
+        };
+        let mut exec = LazyMemoryExec::try_new(
+            Arc::clone(&self.schema),
+            vec![Arc::new(RwLock::new(generator))],
+        )?;
+        exec = exec.with_projection(projection.cloned());
+        Ok(Arc::new(exec))
+    }
+
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> DataFusionResult<Vec<TableProviderFilterPushDown>> {
+        Ok(vec![
+            TableProviderFilterPushDown::Unsupported;
+            filters.len()
+        ])
+    }
+}
+
+#[derive(Debug)]
+struct CScanGenerator {
+    db_name: String,
+    table_name: String,
+    table: TableInfo,
+    schema: Arc<Schema>,
+    page_id: u32,
+    remaining: Option<usize>,
+}
+
+impl fmt::Display for CScanGenerator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CScanGenerator(table={})", self.table_name)
+    }
+}
+
+impl LazyBatchGenerator for CScanGenerator {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn generate_next_batch(&mut self) -> DataFusionResult<Option<RecordBatch>> {
+        if self.remaining == Some(0) {
+            return Ok(None);
+        }
+
+        loop {
+            let _guard = c_scan_lock()
+                .lock()
+                .map_err(|_| DataFusionError::Execution("C scan lock poisoned".into()))?;
+            let scan = scan_page_for(&self.db_name, &self.table_name, self.page_id)
+                .map_err(DataFusionError::Execution)?;
+            self.page_id += 1;
+
+            let Some(scan) = scan else {
+                return Ok(None);
+            };
+            if scan.records.is_empty() {
+                continue;
+            }
+
+            let mut batch = arrow_batch(self.schema.as_ref().clone(), &scan.table, &scan.records)
+                .map_err(DataFusionError::Execution)?;
+            if let Some(remaining) = self.remaining.as_mut() {
+                if batch.num_rows() > *remaining {
+                    batch = batch.slice(0, *remaining);
+                    *remaining = 0;
+                } else {
+                    *remaining -= batch.num_rows();
+                }
+            }
+            return Ok(Some(batch));
+        }
+    }
+
+    fn reset_state(&self) -> Arc<RwLock<dyn LazyBatchGenerator>> {
+        Arc::new(RwLock::new(Self {
+            db_name: self.db_name.clone(),
+            table_name: self.table_name.clone(),
+            table: self.table.clone(),
+            schema: Arc::clone(&self.schema),
+            page_id: 0,
+            remaining: self.remaining,
+        }))
+    }
 }
 
 /// Prints a result as an ordered `col | col` table.
